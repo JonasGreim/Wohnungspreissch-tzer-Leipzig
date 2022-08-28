@@ -1,0 +1,71 @@
+# training pipeline is only executed for manually triggered runs without stage build and deploy
+# build and deploy is executed every push or pull on master
+
+# in every Job we use "tags: - SWTP" to trigger the specific gitlab runner from the university (SWTP pcai042 runner)
+# Settings->CI/CD->Runners->Specific Runners
+
+# Stages are executed sequentially
+stages:
+  - training
+  - build
+  - deploy
+
+# train model and push to MLFlow (http://mlflow.sws.informatik.uni-leipzig.de)
+# But it is not used directly
+train_and_push_model:
+  stage: training
+  only:
+    - web
+  tags:
+    - SWTP
+  image: python:3.9
+  before_script:
+    - pip install -r requirements.txt
+  script:
+    - cd apartment_price_estimate/
+    - python training.py -f
+
+# use kaniko instead of docker in docker (dind) because the university infrastructure does not allow privileged mode
+# $variables are defined in Gitlab under Settings->CI/CD->Variables ($CI_PROJECT_DIR is predefined through gitlab)
+# build docker image and push to docker hub
+build_image:
+  stage: build
+  only:
+    - master
+  except:
+    - web
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script: # https://docs.gitlab.com/ee/ci/docker/using_kaniko.html
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - >-
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_TAG}"
+
+# pull docker image from hub (if local pull local) and push to k8s
+deploy_to_kubernetes:
+  stage: deploy
+  only:
+    - master
+  except:
+    - web
+  tags:
+    - SWTP
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: [""]
+  script:
+    - kubectl config set clusters.k8s.certificate-authority-data $K8S_CERTIFICATE
+    - kubectl config set clusters.k8s.server $K8S_SERVER
+    - kubectl config set users.ci-user.token $K8S_TOKEN
+    - kubectl config set-context ci-k8s --cluster=k8s --user=ci-user --namespace=group7
+    - kubectl config use-context ci-k8s
+    - kubectl rollout restart deployment apartement-calc-streamlit-deployment
+    # Following line DOES NOT WORK: "Error from server (NotFound): deployments.apps "apartement-calc-ingress" not found"
+    # - kubectl rollout restart deployment apartement-calc-ingress
+    # This works:
+    - kubectl apply -f ingress.yaml

@@ -1,0 +1,9 @@
+streamlit
+matplotlib
+pandas
+scikit-learn
+numpy
+mlflow
+minio
+python-dotenv
+argparse
