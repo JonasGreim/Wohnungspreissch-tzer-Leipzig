@@ -1,3 +1,5 @@
+> IMPORTANT
+
 > Gitlab project. Only reupload! CI/CD pipeplines cannot run here. Project cannot be built.
 > Data,.env, kubeconfig, ingress.yaml are not puplic. 
 
